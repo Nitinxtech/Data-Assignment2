@@ -1,4 +1,4 @@
-# Aurora Skies RAG Chatbot (One‑File)
+# Aurora Skies Chatbot
 
 A tiny Retrieval‑Augmented chatbot for Aurora Skies Airways FAQs. It’s intentionally simple and lives mostly in a single file (`app.py`).
 
