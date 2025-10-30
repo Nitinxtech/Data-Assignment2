@@ -1,0 +1,7 @@
+streamlit==1.39.0
+
+# Optional providers (both optional; app will work without them)
+transformers==4.45.2
+torch>=2.2.0
+
+groq==0.9.0

@@ -1,0 +1,146 @@
+Aurora Skies RAG Chatbot — Project Explanation
+
+What this app is
+- A tiny Retrieval‑Augmented Generation (RAG) chatbot for airline FAQs.
+- Single-page Streamlit UI backed by a simple, custom retriever.
+- Dataset-driven: answers come from airline_faq.csv (Question, Answer).
+
+Why RAG instead of plain LLM
+- Plain LLMs can hallucinate.
+- RAG first retrieves relevant facts from your data, then answers grounded in those facts.
+- If unsure, it abstains and suggests better queries.
+
+How the request flows (step-by-step)
+1) User types a question in the Streamlit UI.
+2) Preprocessing expands the question using:
+   - Tokenization and lowercasing
+   - A tiny custom stemmer (handles suffixes like -ing, -ed, -s)
+   - Stopword removal
+   - Bigrams (two-word combinations) for short phrase matching
+   - A small synonyms list (e.g., baggage → luggage)
+3) Retrieval with BM25-like scoring:
+   - Each FAQ (Question + Answer) is pre-tokenized and indexed on startup.
+   - BM25 score is computed for the query against every FAQ.
+   - Top-k FAQs are returned with numeric scores.
+4) Guardrails are applied before answering:
+   - Small-talk ("hi/hello") → friendly nudge with example questions.
+   - Out-of-scope (e.g., crash/accident) → a safety message.
+   - Low confidence (below threshold) → abstain + suggested questions.
+5) Answer generation (grounded):
+   - If GROQ_API_KEY is set, use Groq model with a strict system prompt: “Use only the provided context; otherwise say ‘I don’t know’.”
+   - If not using Groq but the sidebar toggle is enabled, a tiny local model paraphrases the grounded answer.
+   - Otherwise, return the best FAQ answer verbatim (extractive mode).
+6) The UI displays the retrieved context (expandable) plus the final answer.
+
+Key files
+- app.py   — Entire RAG pipeline and UI, with short human comments.
+- airline_faq.csv — Sample dataset (Question, Answer).
+- requirements.txt — Minimal dependencies.
+
+Configuration knobs
+- FAQ_CSV: path to a CSV with Question/Answer columns.
+- GROQ_API_KEY, GROQ_MODEL: enable/use Groq-hosted open-source models.
+- Sidebar: top-k, similarity threshold, style (Precise/Conversational), temperature, top-p, top-k.
+
+Design choices that keep it robust
+- Simple but effective retriever: BM25 + stemming + bigrams + synonyms.
+- Guardrails prevent nonsense answers; abstain when not confident.
+- Works without GPUs or heavy installs; generator is optional.
+
+Limitations and next steps
+- Synonyms list is tiny; could be extended or learned.
+- BM25 is lexical, not semantic; an embedding-based retriever could be added later.
+- No analytics/evaluation yet.
+
+
+====================
+Line-by-line code guide (app.py)
+====================
+
+Imports and optional providers
+- import os, math, csv, typing as t, random, streamlit as st
+  Core libraries, types, randomness for light phrasing, and Streamlit UI.
+- Optional imports in try/except blocks for Groq and transformers
+  The app runs even if these are missing; feature flags (_HAS_GROQ/_HAS_TRANSFORMERS) control usage.
+
+Globals and page config
+- CSV_PATH, DEFAULT_MODEL
+  Allow swapping dataset and model via environment variables.
+- st.set_page_config(...)
+  Streamlit page title/icon/layout.
+
+load_faq(path)
+- Reads the CSV, normalizes to "Question" and "Answer" columns (case-insensitive), returns a list of dicts.
+- Cached with st.cache_data for speed.
+
+simple_stem(token)
+- Minimal stemming to boost recall on simple word variants (e.g., changing → chang, policies → policy).
+
+tokenize(text)
+- Lowercases, keeps alphanumeric characters, removes common stopwords.
+- Applies simple_stem to tokens.
+- Adds bigrams (term_i + '_' + term_{i+1}) to capture short phrases.
+
+SYNONYMS
+- Small manual mapping for key airline terms (flight, baggage, refund, change, delay) to catch paraphrases.
+
+build_retriever(docs)
+- Prepares the BM25 index:
+  - Tokenizes each document (Question + Answer)
+  - Computes document frequencies and IDF
+  - Stores per-document term counts and lengths
+  - Computes average document length (avgdl)
+- Cached with st.cache_resource so it builds once.
+
+expand_query_terms(terms)
+- Adds stemmed synonyms for each query token.
+
+bm25_score(query_terms, index)
+- Classic BM25 scoring (k1=1.5, b=0.75).
+- Returns a score for each document.
+
+retrieve(query, index, top_k)
+- Tokenizes and expands the query; scores all docs; returns top_k with {question, answer, score}.
+
+format_context(snippets)
+- Formats the retrieved Q/A pairs as a compact context block for generation.
+
+should_abstain(snippets, threshold)
+- If there are no snippets or the best score < threshold, return True.
+
+is_small_talk / is_out_of_scope
+- Lightweight filters for chit-chat and sensitive topics (e.g., crashes).
+
+generate_with_groq(...)
+- Calls a Groq-hosted model using a strict system message that forbids using external knowledge.
+
+generate_with_transformers(...)
+- Optional local paraphraser using a tiny model; only used when explicitly enabled.
+
+extractive_answer(snippets, style)
+- Safe fallback: returns the top FAQ answer as-is.
+- Adds a short conversational prefix if the style is Conversational.
+
+suggest_questions(index)
+- Returns a few FAQ questions to guide the user when abstaining.
+
+generate_answer(...)
+- Router for the full response:
+  1) Small-talk → friendly nudge + suggestions
+  2) Out-of-scope → safety message
+  3) Low-confidence → abstain + suggestions
+  4) Otherwise build a strict prompt with the retrieved context and:
+     - Use Groq if available
+     - Else use the optional local paraphraser if enabled
+     - Else return extractive answer
+
+UI section
+- Sidebar controls: top-k, threshold, style, generator settings (if enabled), and model info.
+- Loads CSV and builds the BM25 index (cached) and shows a success message.
+- Main input box for the question; on submit:
+  - Runs retrieval and displays the retrieved context (expandable)
+  - Calls generate_answer and renders the final response
+
+
+How to explain this in a minute
+- “We built a tiny RAG chatbot. It reads a FAQ CSV, indexes it with a BM25-style retriever upgraded with stemming, bigrams, and a small synonyms list. When a user asks a question, we score FAQs and select the top matches. If confidence is low, we abstain and suggest better questions. For generation, we prefer Groq (or an optional local paraphraser) but we default to a fully grounded extractive answer. The UI is Streamlit with simple controls. The result is fast, small, and avoids hallucinations.”
